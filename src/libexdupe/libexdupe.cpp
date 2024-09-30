@@ -559,6 +559,7 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
         __m128i src3 = _mm_loadu_si128((__m128i *)(&src[i + p80]));
         __m128i src4 = _mm_loadu_si128((__m128i *)(&src[i + len - slide - 4]));
         __m128i sum = _mm_add_epi8(_mm_add_epi8(src1, src2), _mm_add_epi8(src3, src4));
+        sum = _mm_add_epi8(sum, sum);
         __m128i comparison = _mm_cmpgt_epi8(sum, _mm_set1_epi8(b - 1));
         auto larger = _mm_movemask_epi8(comparison);
         if (larger != 0xffff) {
@@ -574,16 +575,22 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
 
 #endif
 
+
     if (match == static_cast<uint64_t>(-1)) {
         for (; i < slide; i += 1) {
-            signed char h = static_cast<unsigned char>(src[i] + src[i + p20] + src[i + p80] + src[i + len - slide - 4]);
+            uint8_t src1 = src[i];
+            uint8_t src2 = src[i + p20];
+            uint8_t src3 = src[i + p80];
+            uint8_t src4 = src[i + len - slide - 4];
+            uint8_t sum = (src1 + src2) + (src3 + src4);
+            sum = sum + sum;
+            signed char h = static_cast<unsigned char>(sum);
             if (h < b) {
                 match = i;
                 break;
             }
         }
     }
-
     if (match == static_cast<uint64_t>(-1)) {
         match = slide;
     }
