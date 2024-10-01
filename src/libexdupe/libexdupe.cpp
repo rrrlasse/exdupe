@@ -170,6 +170,10 @@ std::atomic<uint64_t> anomalies_large;
 std::atomic<uint64_t> congested_small;
 std::atomic<uint64_t> congested_large;
 
+std::atomic<uint64_t> hits1;
+std::atomic<uint64_t> hits2;
+std::atomic<uint64_t> hits3;
+
 static bool dd_equal(const void *src1, const void *src2, size_t len) {
     char *s1 = (char *)src1;
     char *s2 = (char *)src2;
@@ -521,30 +525,33 @@ static uint32_t quick(unsigned char init1, unsigned char init2, unsigned char in
 
 static uint32_t window(const unsigned char *src, size_t len, const unsigned char **pos) {
     size_t i = 0;
-    size_t slide = len / 8; // slide must be able to fit in hash_t.O. Todo, static assert
+    size_t slide = minimum(len / 2, 65536); // slide must be able to fit in hash_t.O. Todo, static assert
     size_t percent = (len - slide) / 100;
     int8_t b = static_cast<int8_t>(len > 8 * 1024 ? 1 : (8 * 1024) / len);
+
+    b = 42;
+
     // len  1k  2k  4k   8k  128k  256k
     //   b   8   4   2    1     1     1
-    size_t p20 = 20 * percent;
-    size_t p80 = 80 * percent;
+    size_t e1 = len / 8;
+    size_t e2 = len / 8 * 2;
 
     uint64_t match = static_cast<size_t>(-1);
-    b = -128 + b;
+  //  b = -128 + b;
 #if 0
 	for (i = 0; i + 32 < slide; i += 32) {
-		__m256i src1 = _mm256_loadu_si256((__m128i*)(&src[i]));
-		__m256i src2 = _mm256_loadu_si256((__m128i*)(&src[i + 20 * percent]));
-		__m256i src3 = _mm256_loadu_si256((__m128i*)(&src[i + 80 * percent]));
-		__m256i src4 = _mm256_loadu_si256((__m128i*)(&src[i + len - slide - 4]));
+		__m256i src1 = _mm256_loadu_si256((__m256i*)(&src[i]));
+		__m256i src2 = _mm256_loadu_si256((__m256i*)(&src[i + 1]));
+		__m256i src3 = _mm256_loadu_si256((__m256i*)(&src[i + slide - 1]));
+		__m256i src4 = _mm256_loadu_si256((__m256i*)(&src[i + slide]));
 		__m256i sum = _mm256_add_epi8(_mm256_add_epi8(src1, src2), _mm256_add_epi8(src3, src4));
-		__m256i comparison = _mm256_cmpgt_epi8(sum, _mm256_set1_epi8(b - 1));
+		__m256i comparison = _mm256_cmpeq_epi8(sum, _mm256_set1_epi8(b));
 		auto larger = _mm256_movemask_epi8(comparison);
-		if (larger != 0xffffffff) {
+		if (larger != 0) {
 #if defined _MSC_VER
-			auto off = _tzcnt_u32(static_cast<unsigned>(~larger));
+			auto off = _tzcnt_u32(static_cast<unsigned>(larger));
 #else
-			auto off = __builtin_ctz(static_cast<unsigned>(~larger));
+			auto off = __builtin_ctz(static_cast<unsigned>(larger));
 #endif
 			match = i + off;
 			break;
@@ -555,18 +562,22 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
 
     for (i = 0; i + 16 < slide; i += 16) {
         __m128i src1 = _mm_loadu_si128((__m128i *)(&src[i]));
-        __m128i src2 = _mm_loadu_si128((__m128i *)(&src[i + p20]));
-        __m128i src3 = _mm_loadu_si128((__m128i *)(&src[i + p80]));
-        __m128i src4 = _mm_loadu_si128((__m128i *)(&src[i + len - slide - 4]));
+        __m128i src2 = _mm_loadu_si128((__m128i *)(&src[i + 1]));
+        __m128i src3 = _mm_loadu_si128((__m128i *)(&src[i + slide - 1]));
+        __m128i src4 = _mm_loadu_si128((__m128i *)(&src[i + slide]));
         __m128i sum = _mm_add_epi8(_mm_add_epi8(src1, src2), _mm_add_epi8(src3, src4));
-        sum = _mm_add_epi8(sum, sum);
-        __m128i comparison = _mm_cmpgt_epi8(sum, _mm_set1_epi8(b - 1));
+        //sum = _mm_add_epi8(sum, sum);
+
+        __m128i zero_vec = _mm_set1_epi8(b); //  _mm_setzero_si128();
+        __m128i comparison = _mm_cmpeq_epi8(sum, zero_vec);
+
+       // __m128i comparison = _mm_cmpeq_epi8(sum, _mm_set1_epi8(0));
         auto larger = _mm_movemask_epi8(comparison);
-        if (larger != 0xffff) {
+        if (larger != 0) {
 #if defined _MSC_VER
-            auto off = _tzcnt_u32(static_cast<unsigned>(~larger));
+            auto off = _tzcnt_u32(static_cast<unsigned>(larger));
 #else
-            auto off = __builtin_ctz(static_cast<unsigned>(~larger));
+            auto off = __builtin_ctz(static_cast<unsigned>(larger));
 #endif
             match = i + off;
             break;
@@ -579,13 +590,13 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
     if (match == static_cast<uint64_t>(-1)) {
         for (; i < slide; i += 1) {
             uint8_t src1 = src[i];
-            uint8_t src2 = src[i + p20];
-            uint8_t src3 = src[i + p80];
-            uint8_t src4 = src[i + len - slide - 4];
+            uint8_t src2 = src[i + 1];
+            uint8_t src3 = src[i + slide - 1];
+            uint8_t src4 = src[i + slide];
             uint8_t sum = (src1 + src2) + (src3 + src4);
-            sum = sum + sum;
+            //sum = sum + sum;
             signed char h = static_cast<unsigned char>(sum);
-            if (h < b) {
+            if (h == b) {
                 match = i;
                 break;
             }
@@ -603,7 +614,10 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
         return 0;
     }
     else {
-        return 1 + quick(src[match], src[match + p20], src[match + p80], src[match + len - slide - 4], (unsigned char *)src + match, len - slide - 8);
+        size_t p20 = 20 * percent;
+        size_t p80 = 80 * percent;
+
+        return 1 + quick(src[match], src[match + 16], src[match + len - slide - 32], src[match + len - slide - 4], (unsigned char *)src + match, len - slide - 8);
     }
 }
 
@@ -908,7 +922,13 @@ static void *compress_thread(void *arg) {
             hash_chunk(me->source, me->payload, me->size_source, policy);
         } else {
             hash_chunk(me->source, me->payload, me->size_source, policy);
+
+            auto t = GetTickCount64();
+
             me->size_destination = process_chunk(me->source, me->payload, me->size_source, me->destination, me->id);
+
+            hits1 += GetTickCount64() - t;
+
         }
 
         pthread_mutex_lock_wrapper(&me->jobmutex);

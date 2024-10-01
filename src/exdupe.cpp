@@ -2352,6 +2352,14 @@ int main(int argc2, char *argv2[])
             s << "Overheads:                   " << format_size(contents_size) << "B meta, " << format_size(references_size) << "B refs, " << format_size(hashtable_size) << "B hashtable, " << format_size(io.write_count - total) << "B misc\n";    
             s << "Unhashed due to congestion:  " << format_size(congested_large) << "B large, " << format_size(congested_small) << "B small\n";
             s << "Unhashed anomalies:          " << format_size(anomalies_large) << "B large, " << format_size(anomalies_small) << "B small";
+
+
+            s << "\nhits1 = " << hits2/hits1  << "";
+            s << "\nhits2 = " << hits2  << "\n";
+            s << "hits3 = " << hits3 << "\n";
+
+
+
             STRING str = s2w(s.str());
             statusbar.print(0, UNITXT("%s"), str.c_str());
             wcerr << "Hashtable fillratio:         ";

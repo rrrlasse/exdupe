@@ -61,3 +61,7 @@ extern std::atomic<uint64_t> unhashed;
 extern std::atomic<uint64_t> anomalies_large;
 extern std::atomic<uint64_t> anomalies_small;
 extern std::atomic<uint64_t> skipped;
+
+extern std::atomic<uint64_t> hits1;
+extern std::atomic<uint64_t> hits2;
+extern std::atomic<uint64_t> hits3;
