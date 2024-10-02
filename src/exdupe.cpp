@@ -94,6 +94,10 @@ const bool WIN = false;
 #include "unicode.h"
 #include "utilities.hpp"
 
+#include "libexdupe/xxHash/xxh3.h"
+#include "libexdupe/xxHash/xxhash.h"
+
+
 #ifdef _WIN32
 #pragma warning(disable : 4459) // todo
 #endif
@@ -229,7 +233,13 @@ public:
     checksum_t ct;
     STRING extra;
     STRING abs_path;
-    uint32_t file_id; // diff files refer to this for unchanged files
+    uint64_t file_id; // diff files refer to this for unchanged files
+
+    bool is_dublicate = false;
+    uint64_t dublicate = 0;
+    char hash[16];
+    uint32_t first;
+    uint32_t last;
 };
 
 vector<contents_t> contents;
@@ -300,9 +310,53 @@ STRING date2str(time_t date) {
     return STRING(dst);
 }
 
+STRING validchars(STRING filename) {
+#ifdef WINDOWS
+    std::wregex invalid(L"[<>:\"/\\|?*]");
+    return std::regex_replace(filename, invalid, L"=");
+#else
+    return filename;
+#endif
+}
+
+
+void read_content_item(FILE* file, contents_t* c) {
+    uint8_t type = io.read_ui<uint8_t>(file);
+    c->directory = ((type >> 0) & 1) == 1;
+    c->symlink = ((type >> 1) & 1) == 1;
+    c->unchanged = ((type >> 2) & 1) == 1;
+    c->is_dublicate = ((type >> 3) & 1) == 1;
+
+    c->file_id = io.read_compact<uint32_t>(file);
+    if (c->unchanged) {
+        return;
+    }
+    c->abs_path = slashify(io.readstr(file));
+    c->payload = io.read_compact<uint64_t>(file);
+    c->name = slashify(io.readstr(file));
+    c->link = slashify(io.readstr(file));
+    c->size = io.read_compact<uint64_t>(file);
+    c->checksum = io.read_ui<uint32_t>(file);
+    c->file_c_time = io.read_ui<uint32_t>(file);
+    c->file_modified = io.read_ui<uint32_t>(file);
+    c->attributes = io.read_ui<uint32_t>(file);
+
+    c->dublicate = io.read_compact<uint64_t>(file);
+    c->first = io.read_ui<uint32_t>(file);
+    c->last = io.read_ui<uint32_t>(file);
+
+    if (!c->directory) {
+        STRING i = c->name;
+        c->name = slashify(validchars(c->name));
+        if (i != c->name) {
+            statusbar.print(2, UNITXT("*nix filename '%s' renamed to '%s'"), i.c_str(), c->name.c_str());
+        }
+    }
+}
+
 void write_contents_item(FILE *file, contents_t *c) {
     uint64_t written = io.write_count;
-    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2);
+    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate ? 1 : 0) << 3);
     io.write_ui<uint8_t>(type, file);
     io.write_compact<uint32_t>(c->file_id, file);
 
@@ -315,7 +369,12 @@ void write_contents_item(FILE *file, contents_t *c) {
         io.write_ui<uint32_t>(c->checksum, file);
         io.write_ui<uint32_t>(static_cast<uint32_t>(c->file_c_time), file);
         io.write_ui<uint32_t>(static_cast<uint32_t>(c->file_modified), file);
-        io.write_ui<uint32_t>(c->attributes, file);      
+        io.write_ui<uint32_t>(c->attributes, file);
+
+        io.write_compact<uint64_t>(c->dublicate, file);
+        io.write_ui<uint32_t>(c->first, file);
+        io.write_ui<uint32_t>(c->last, file);
+
     }
     contents_size += io.write_count - written;
 }
@@ -657,43 +716,6 @@ size_t write_contents(FILE *file) {
     return io.write_count - w;
 }
 
-STRING validchars(STRING filename) {
-#ifdef WINDOWS
-    std::wregex invalid(L"[<>:\"/\\|?*]");
-    return std::regex_replace(filename, invalid, L"=");
-#else
-    return filename;
-#endif
-}
-
-void read_content_item(FILE *file, contents_t *c) {
-    uint8_t type = io.read_ui<uint8_t>(file);
-    c->directory = ((type >> 0) & 1) == 1;
-    c->symlink = ((type >> 1) & 1) == 1;
-    c->unchanged = ((type >> 2) & 1) == 1;
-
-    c->file_id = io.read_compact<uint32_t>(file);
-    if(c->unchanged) {
-        return;
-    }
-    c->abs_path = slashify(io.readstr(file));
-    c->payload = io.read_compact<uint64_t>(file);
-    c->name = slashify(io.readstr(file));
-    c->link = slashify(io.readstr(file));
-    c->size = io.read_compact<uint64_t>(file);
-    c->checksum = io.read_ui<uint32_t>(file);
-    c->file_c_time = io.read_ui<uint32_t>(file);
-    c->file_modified = io.read_ui<uint32_t>(file);
-    c->attributes = io.read_ui<uint32_t>(file);   
-
-    if (!c->directory) {
-        STRING i = c->name;
-        c->name = slashify(validchars(c->name));
-        if (i != c->name) {
-            statusbar.print(2, UNITXT("*nix filename '%s' renamed to '%s'"), i.c_str(), c->name.c_str());
-        }
-    }
-}
 
 vector<contents_t> read_contents(FILE* f) {
     vector<contents_t> ret;
@@ -1471,7 +1493,7 @@ void decompress_individuals(FILE *ffull, FILE *fdiff) {
                     set_date(dstdir + DELIM_STR + c.name, c.file_modified);
                     set_attributes(dstdir + DELIM_STR + c.name, c.attributes);
                 }
-                abort(c.checksum != t.result, UNITXT("File checksum error"));
+                abort(c.checksum != t.result32(), UNITXT("File checksum error"));
             }
         }
     }
@@ -1577,7 +1599,7 @@ void decompress_files(vector<contents_t> &c, bool add_files) {
                 io.close(ofile);
                 ofile = 0;
                 curfile_written = 0;
-                abort(c.at(0).checksum != decompress_checksum.result, UNITXT("File checksum error"));
+                abort(c.at(0).checksum != decompress_checksum.result32(), UNITXT("File checksum error"));
 
                 c.erase(c.begin());
             }
@@ -1707,6 +1729,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         }
     }
 
+
     ifile = try_open(input_file.c_str(), 'r', false);
 
     if (!ifile) {
@@ -1717,6 +1740,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
             abort(true, UNITXT("Aborted, error opening source file: %s"), input_file.c_str());
         }
     }
+
 
     update_statusbar_backup(input_file);
 
@@ -1741,8 +1765,73 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     file_meta.directory = false;
     file_meta.symlink = false;
     file_meta.unchanged = false;
+
+
+    
+
+    if(file_size > 4096) {
+        uint32_t lo;
+        uint32_t hi;
+        char kb[1024];
+        checksum_t c;
+
+        io.read(kb, 1024, ifile);
+        checksum_init(&c);
+        checksum((unsigned char*)kb, 1024, &c);
+        lo = c.result32();
+
+        io.seek(ifile, -1024, SEEK_END);
+        io.read(kb, 1024, ifile);
+        checksum_init(&c);
+        checksum((unsigned char*)kb, 1024, &c);
+        hi = c.result32();
+
+        file_meta.first = lo;
+        file_meta.last = hi;
+
+        for(auto& cont : contents) {
+            if(cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+
+                // todo check if rest of file is identical too          
+                
+                io.seek(ifile, 0, SEEK_SET);
+                checksum_init(&c);
+
+                for(;;) {
+                    auto r = io.read(in, 1024*1024, ifile);
+                    if(r == 0) {
+                        break;
+                    }
+                    checksum((unsigned char*)in, r, &c);
+                }
+
+                auto crc = c.result32();
+                if(crc == cont.checksum) {
+                    file_meta.payload = cont.payload;
+                    file_meta.checksum = cont.checksum;                
+                    file_meta.file_id = file_id_counter++;
+                    file_meta.is_dublicate = true;
+                    file_meta.dublicate = cont.file_id;
+                    contents.push_back(file_meta);
+                    if (flush) {
+                        flushit();
+                    }
+                    io.close(ifile);
+                    //wcerr << L"\nFOUND DUBLICATE\n";
+                    return;
+                }
+
+
+
+            }
+        }
+
+        io.seek(ifile, 0, SEEK_SET);
+    }
+
+
+
     checksum_init(&file_meta.ct);
-    file_queue.push_back(file_meta);
 
     files++;
 
@@ -1752,6 +1841,11 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         tmp.abs_path.clear();
         write_contents_item(ofile, &tmp);
     }
+
+
+    file_queue.push_back(file_meta);
+
+
     if (file_size > DISK_READ_CHUNK - payload_queue_size) {
         empty_q();
 
@@ -1775,8 +1869,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
             if (file_read == file_size && file_size > 0) {
                 // No CRC block for 0-sized files
                 io.try_write("C", 1, ofile);
-                file_meta.checksum = file_meta.ct.result;
-                io.write_ui<uint32_t>(file_meta.ct.result, ofile);
+                file_meta.checksum = file_meta.ct.result32();
+                io.write_ui<uint32_t>(file_meta.ct.result32(), ofile);
             }
             empty_q();
         }
@@ -1796,8 +1890,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         if (file_read == file_size && file_size > 0) {
             // No CRC block for 0-sized files
             io.try_write("C", 1, ofile);
-            file_meta.checksum = file_meta.ct.result;
-            io.write_ui<uint32_t>(file_meta.ct.result, ofile);
+            file_meta.checksum = file_meta.ct.result32();
+            io.write_ui<uint32_t>(file_meta.ct.result32(), ofile);
         }
     }
 
@@ -1811,7 +1905,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         file_meta.size = file_read;
     }
 
-    file_meta.checksum = file_meta.ct.result;
+    file_meta.checksum = file_meta.ct.result32();
     file_meta.file_id = file_id_counter;
     file_id_counter++;
     contents.push_back(file_meta);

@@ -58,6 +58,9 @@
 #define CASESENSE(str) str
 #endif
 
+#include "libexdupe/xxHash/xxh3.h"
+#include "libexdupe/xxHash/xxhash.h"
+
 
 
 using namespace std; // fixme, remove
@@ -119,13 +122,13 @@ template <class T, class U> const uint64_t minimum(const T a, const U b) {
     return (static_cast<uint64_t>(a) > static_cast<uint64_t>(b)) ? static_cast<uint64_t>(b) : static_cast<uint64_t>(a);
 }
 
-typedef struct {
-    uint64_t remainder;
-    uint64_t remainder_len;
-    uint64_t b_val;
-    uint64_t a_val;
-    uint32_t result;
-} checksum_t;
+struct checksum_t {
+    XXH3_state_t state;
+    XXH128_hash_t hash;
+    char* result();
+    uint32_t hi();
+    uint32_t result32();
+};
 
 void checksum(unsigned char *data, size_t len, checksum_t *t);
 void checksum_init(checksum_t *t);

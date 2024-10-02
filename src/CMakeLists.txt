@@ -42,6 +42,8 @@ apply_compile_options_to_files("${EXDUPE}" "${flags_to_apply}")
 
 add_executable(exdupe ${SOURCES})
 
+#add_subdirectory(libexdupe/xxHash/cmake_unofficial)
+
 add_subdirectory(libexdupe)
 add_subdirectory(lua)
 add_subdirectory(test)
