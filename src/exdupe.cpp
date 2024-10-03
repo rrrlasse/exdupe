@@ -1778,7 +1778,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     file_meta.file_id = file_id_counter++;
 
 
-    if(file_size > 4096) {
+    if(file_size > 4096 && input_file != UNITXT("-stdin")) {
         uint32_t lo;
         uint32_t hi;
         char kb[1024];
