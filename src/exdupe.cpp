@@ -2529,10 +2529,11 @@ int main(int argc2, char *argv2[])
             s << "High entropy files:          " << format_size(high_entropy) << "B";
 
 
+            /*
             s << "\nhits1 = " << hits2/(hits1+1)  << "";
             s << "\nhits2 = " << hits2  << "\n";
             s << "hits3 = " << hits3 << "\n";
-
+            */
 
 
             STRING str = s2w(s.str());
