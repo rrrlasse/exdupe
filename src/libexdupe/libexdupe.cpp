@@ -169,6 +169,7 @@ std::atomic<uint64_t> anomalies_small;
 std::atomic<uint64_t> anomalies_large;
 std::atomic<uint64_t> congested_small;
 std::atomic<uint64_t> congested_large;
+std::atomic<uint64_t> high_entropy;
 
 std::atomic<uint64_t> hits1;
 std::atomic<uint64_t> hits2;
@@ -290,6 +291,8 @@ typedef struct {
     int id;
     char *zstd;
     bool busy;
+
+    bool entropy; // .jpg, .mpeg, .zip etc
 } job_t;
 
 job_t *jobs;
@@ -740,10 +743,10 @@ static size_t write_match(size_t length, uint64_t payload, unsigned char *dst) {
     return 0;
 }
 
-static size_t write_literals(const unsigned char *src, size_t length, unsigned char *dst, int thread_id) {
+static size_t write_literals(const unsigned char *src, size_t length, unsigned char *dst, int thread_id, bool entropy) {
     if (length > 0) {
         size_t r;
-        if (level == 0) {
+        if (level == 0 || entropy) {
             dst[32 - (6 + 8)] = '0';
             memcpy(dst + 33 - (6 + 8), src, length);
             r = length + 1;
@@ -857,12 +860,12 @@ static size_t process_chunk(const unsigned char *src, uint64_t pay, size_t lengt
             }
 #endif
             if (match_s == 0) {
-                dst += write_literals(src, upto - src + 1, dst, thread_id);
+                dst += write_literals(src, upto - src + 1, dst, thread_id, false);
                 break;
             } 
             else {
                 if (match_s - src > 0) {
-                    dst += write_literals(src, match_s - src, dst, thread_id);
+                    dst += write_literals(src, match_s - src, dst, thread_id, false);
                 }
                 dst += write_match(minimum(SMALL_BLOCK, upto - match_s + 1), ref_s, dst);
                 src = match_s + SMALL_BLOCK;
@@ -915,20 +918,19 @@ static void *compress_thread(void *arg) {
         pthread_mutex_unlock_wrapper(&me->jobmutex);
 
         int policy = 1;
-        int order = 0;
 
-        if (order == 1) {
-            me->size_destination = process_chunk(me->source, me->payload, me->size_source, me->destination, me->id);
-            hash_chunk(me->source, me->payload, me->size_source, policy);
-        } else {
-            hash_chunk(me->source, me->payload, me->size_source, policy);
 
+       // me->size_destination = process_chunk(me->source, me->payload, me->size_source, me->destination, me->id);
+       // hash_chunk(me->source, me->payload, me->size_source, policy);
+
+        if(!me->entropy) {
+            hash_chunk(me->source, me->payload, me->size_source, policy);
             auto t = GetTickCount64();
-
             me->size_destination = process_chunk(me->source, me->payload, me->size_source, me->destination, me->id);
-
             hits1 += GetTickCount64() - t;
-
+        }
+        else {
+            me->size_destination = write_literals(me->source, me->size_source, me->destination, me->id, true);
         }
 
         pthread_mutex_lock_wrapper(&me->jobmutex);
@@ -1150,9 +1152,14 @@ size_t flush_pend(char *dst, uint64_t *payloadret) {
 
 uint64_t dup_get_flushed() { return flushed; }
 
-size_t dup_compress(const void *src, char *dst, size_t size, uint64_t *payload_returned) {
+size_t dup_compress(const void *src, char *dst, size_t size, uint64_t *payload_returned, bool entropy) {
     char *dst_orig = dst;
     *payload_returned = 0;
+
+    if(entropy) {
+        high_entropy += size;
+    }
+
 
 #if 0 // single threaded naive for debugging
 	if (size > 0)
@@ -1196,6 +1203,7 @@ size_t dup_compress(const void *src, char *dst, size_t size, uint64_t *payload_r
         global_payload += size;
         count_payload += size;
         jobs[f].size_source = size;
+        jobs[f].entropy = entropy;
 
         pthread_cond_signal_wrapper(&jobs[f].cond);
         pthread_mutex_unlock_wrapper(&jobs[f].jobmutex);
