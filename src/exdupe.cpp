@@ -738,6 +738,12 @@ void init_content_maps(FILE* ffull) {
     auto con = read_contents(ffull);
     for(auto c : con) {
         if(!c.directory && !c.symlink) {
+
+            if(contents_full.find(CASESENSE(c.abs_path)) != contents_full.end()) {
+                int g = 234;
+            }
+
+
             abort((contents_full.find(CASESENSE(c.abs_path)) != contents_full.end()), UNITXT("Internal error at main::contents_full.find(), or diff file doesn't belong to full file"));
             contents_full[CASESENSE(c.abs_path)] = c;
             abort((contents_full_ids.find(c.file_id) != contents_full_ids.end()), UNITXT("Internal error at main::contents_full_ids.find(), or diff file doesn't belong to full file"));
@@ -1769,7 +1775,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     file_meta.directory = false;
     file_meta.symlink = false;
     file_meta.unchanged = false;
-
+    file_meta.file_id = file_id_counter++;
 
 
     if(file_size > 4096) {
@@ -1793,7 +1799,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         file_meta.last = hi;
 
         for(auto& cont : contents) {
-            if(cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+            if(!cont.is_dublicate && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
 
                 // todo check if rest of file is identical too          
                 
@@ -1814,12 +1820,18 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 if(crc == cont.checksum) {
                     file_meta.payload = cont.payload;
                     file_meta.checksum = cont.checksum;                
-                    file_meta.file_id = file_id_counter++;
                     file_meta.is_dublicate = true;
                     file_meta.dublicate = cont.file_id;
 
-                    // io.try_write("F", 1, ofile); 
-                    // write_contents_item(ofile, &c);
+                 
+
+                    if (!diff_flag) 
+                    {
+                        // todo clear abs_path?
+                        io.try_write("U", 1, ofile);
+                        write_contents_item(ofile, &file_meta);
+                    }
+                    
 
                     identical++;
                     contents.push_back(file_meta);
@@ -1851,7 +1863,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     if(!diff_flag) {
         io.try_write("F", 1, ofile);
         contents_t tmp = file_meta;
-        tmp.abs_path.clear();
+        tmp.abs_path.clear(); // todo why is this cleared?
         write_contents_item(ofile, &tmp);
     }
 
@@ -1940,8 +1952,6 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     }
 
     file_meta.checksum = file_meta.ct.result32();
-    file_meta.file_id = file_id_counter;
-    file_id_counter++;
     contents.push_back(file_meta);
 }
 
@@ -2186,6 +2196,11 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
     // ensure_relative(curdir);
     save_directory(UNITXT(""), curdir + DELIM_STR); // initial root
 
+
+    vector<contents_t> identicals_queue;
+    map<uint64_t, contents_t> written;
+
+
     for (;;) {
         char w;
 
@@ -2199,7 +2214,15 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
             curdir = extract_dir + DELIM_STR + c.name;
             save_directory(UNITXT(""), curdir);
             create_directories(curdir, c.file_modified);
-        } else if (w == 'F') {
+        } else if (w == 'U') {
+            contents_t c;
+            files++;
+            read_content_item(ifile, &c);
+            STRING buf2 = remove_delimitor(curdir) + DELIM_STR + c.name;
+            c.extra = buf2;
+            identicals_queue.push_back(c);
+        }
+        else if (w == 'F') {
             contents_t c;
             files++;
             read_content_item(ifile, &c);
@@ -2214,11 +2237,22 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
                 c.extra = buf2;
                 c.checksum = 0;
                 file_queue.push_back(c);
+                
+//                written.push_back(c);
+                written.insert({ c.file_id, c});
+
                 update_statusbar_restore(buf2);
                 name = c.name;
             }
+
+
+
+
         } else if (w == 'A') {
             decompress_files(file_queue, add_files);
+
+
+
         } else if (w == 'C') { // crc
             uint32_t crc = io.read_ui<uint32_t>(ifile);
             file_queue.at(file_queue.size() - 1).checksum = crc;
@@ -2231,11 +2265,21 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
         }
 
         else if (w == 'X') {
-            return;
+            break;
         } else {
             abort(true, UNITXT("Source file corrupted"));
         }
     }
+
+    for(auto& i : identicals_queue) {
+        auto src = i.extra;
+        auto r = written.find(i.dublicate);
+        auto dst = r->second.extra;
+        std::filesystem::copy_file(dst, src);
+
+    }
+
+
 }
 
 void write_header(FILE *file, status_t s, uint64_t mem, bool hash_flag, uint64_t hash_salt, uint64_t archive_id) {
