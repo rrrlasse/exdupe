@@ -1823,8 +1823,6 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                     file_meta.is_dublicate = true;
                     file_meta.dublicate = cont.file_id;
 
-                 
-
                     if (!diff_flag) 
                     {
                         // todo clear abs_path?
@@ -1832,8 +1830,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                         write_contents_item(ofile, &file_meta);
                     }
                     
-
-                    identical++;
+                    identical_files++;
                     contents.push_back(file_meta);
                     if (flush) {
                         flushit();
@@ -2198,7 +2195,7 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
 
 
     vector<contents_t> identicals_queue;
-    map<uint64_t, contents_t> written;
+    map<uint64_t, STRING> written;
 
 
     for (;;) {
@@ -2238,21 +2235,13 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
                 c.checksum = 0;
                 file_queue.push_back(c);
                 
-//                written.push_back(c);
-                written.insert({ c.file_id, c});
+                written.insert({ c.file_id, c.extra});
 
                 update_statusbar_restore(buf2);
                 name = c.name;
             }
-
-
-
-
         } else if (w == 'A') {
             decompress_files(file_queue, add_files);
-
-
-
         } else if (w == 'C') { // crc
             uint32_t crc = io.read_ui<uint32_t>(ifile);
             file_queue.at(file_queue.size() - 1).checksum = crc;
@@ -2271,12 +2260,22 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
         }
     }
 
+    vector<char> buf;
+    buf.resize(DISK_READ_CHUNK);
     for(auto& i : identicals_queue) {
-        auto src = i.extra;
+        auto dst = i.extra;
         auto r = written.find(i.dublicate);
-        auto dst = r->second.extra;
-        std::filesystem::copy_file(dst, src);
+        auto src = r->second;
 
+        auto ofile = create_file(dst);
+        auto ifile = try_open(src, 'r', true);
+        for(size_t r; r = io.read(buf.data(), DISK_READ_CHUNK, ifile); r > 0) {
+            io.write(buf.data(), r, ofile);
+            tot_res += r;
+            update_statusbar_restore(dst);
+        }
+        io.close(ifile);
+        io.close(ofile);
     }
 
 
@@ -2521,8 +2520,8 @@ int main(int argc2, char *argv2[])
                 s << "Stored as unchanged files:   " << format_size(unchanged) << "B in " << w2s(del(unchanged_files)) << " files\n";
             }
             s << "Stored as duplicated files:  " << format_size(identical) << " in " << w2s(del(identical_files)) << " files\n";
-            s << "Stored as literals:          " << format_size(stored_as_literals) << "B (" << format_size(literals_compressed_size) << "B compressed)\n";
             s << "Stored as duplicated blocks: " << format_size(largehits + smallhits) << "B (" << format_size(largehits) << "B large, " << format_size(smallhits) << "B small)\n";
+            s << "Stored as literals:          " << format_size(stored_as_literals) << "B (" << format_size(literals_compressed_size) << "B compressed)\n";
             uint64_t total = literals_compressed_size + contents_size + references_size + hashtable_size;
             s << "Overheads:                   " << format_size(contents_size) << "B meta, " << format_size(references_size) << "B refs, " << format_size(hashtable_size) << "B hashtable, " << format_size(io.write_count - total) << "B misc\n";    
             s << "Unhashed due to congestion:  " << format_size(congested_large) << "B large, " << format_size(congested_small) << "B small\n";
