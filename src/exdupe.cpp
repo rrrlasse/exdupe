@@ -239,7 +239,8 @@ public:
     STRING abs_path;
     uint64_t file_id; // diff files refer to this for unchanged files
 
-    bool is_dublicate = false;
+    bool is_dublicate_of_full = false;
+    bool is_dublicate_of_diff = false;
     uint64_t dublicate = 0;
     char hash[16];
     uint32_t first;
@@ -329,7 +330,8 @@ void read_content_item(FILE* file, contents_t* c) {
     c->directory = ((type >> 0) & 1) == 1;
     c->symlink = ((type >> 1) & 1) == 1;
     c->unchanged = ((type >> 2) & 1) == 1;
-    c->is_dublicate = ((type >> 3) & 1) == 1;
+    c->is_dublicate_of_full = ((type >> 3) & 1) == 1;
+    c->is_dublicate_of_diff = ((type >> 4) & 1) == 1;
 
     c->file_id = io.read_compact<uint32_t>(file);
     if (c->unchanged) {
@@ -360,7 +362,7 @@ void read_content_item(FILE* file, contents_t* c) {
 
 void write_contents_item(FILE *file, contents_t *c) {
     uint64_t written = io.write_count;
-    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate ? 1 : 0) << 3);
+    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate_of_full ? 1 : 0) << 3) | ((c->is_dublicate_of_diff ? 1 : 0) << 4);
     io.write_ui<uint8_t>(type, file);
     io.write_compact<uint32_t>(c->file_id, file);
 
@@ -1484,7 +1486,7 @@ void decompress_individuals(FILE *ffull, FILE *fdiff) {
                 ofile = pipe_out ? stdout : create_file(outfile);
                 resolved = 0;
 
-                if (diff_flag && !c.unchanged) {
+                if (diff_flag && !c.unchanged && !c.is_dublicate_of_full ) {
                     c.payload += basepay;
                 }
 
@@ -1798,55 +1800,69 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         file_meta.first = lo;
         file_meta.last = hi;
 
-        for(auto& cont : contents) {
-            if(!cont.is_dublicate && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+        auto is_identical = [&](contents_t& cont, bool in_diff) -> bool{
+            io.seek(ifile, 0, SEEK_SET);
+            checksum_init(&c);
 
-                // todo check if rest of file is identical too          
-                
-                io.seek(ifile, 0, SEEK_SET);
-                checksum_init(&c);
+            for (;;) {
+                auto r = io.read(in, 1024 * 1024, ifile);
+                identical += r;
+                update_statusbar_backup(input_file);
+                if (r == 0) {
+                    break;
+                }
+                checksum((unsigned char*)in, r, &c);
+            }
 
-                for(;;) {
-                    auto r = io.read(in, 1024*1024, ifile);
-                    identical += r;
-                    update_statusbar_backup(input_file);
-                    if(r == 0) {
-                        break;
-                    }
-                    checksum((unsigned char*)in, r, &c);
+            auto crc = c.result32();
+            if (crc == cont.checksum) {
+                file_meta.payload = cont.payload;
+                file_meta.checksum = cont.checksum;
+
+                file_meta.is_dublicate_of_full = !in_diff;
+                file_meta.is_dublicate_of_diff = in_diff;
+
+                file_meta.dublicate = cont.file_id;
+
+                if (!diff_flag) {
+                    // todo clear abs_path?
+                    io.try_write("U", 1, ofile);
+                    write_contents_item(ofile, &file_meta);
                 }
 
-                auto crc = c.result32();
-                if(crc == cont.checksum) {
-                    file_meta.payload = cont.payload;
-                    file_meta.checksum = cont.checksum;                
-                    file_meta.is_dublicate = true;
-                    file_meta.dublicate = cont.file_id;
+                identical_files++;
+                contents.push_back(file_meta);
+                if (flush) {
+                    flushit();
+                }
+                io.close(ifile);
+                //wcerr << L"\nFOUND DUBLICATE\n";
+                return true;
+            }
+            else {
+                identical -= file_size; // rollback
+                return false;
+            }
+        };
 
-                    if (!diff_flag) 
-                    {
-                        // todo clear abs_path?
-                        io.try_write("U", 1, ofile);
-                        write_contents_item(ofile, &file_meta);
-                    }
-                    
-                    identical_files++;
-                    contents.push_back(file_meta);
-                    if (flush) {
-                        flushit();
-                    }
-                    io.close(ifile);
-                    //wcerr << L"\nFOUND DUBLICATE\n";
+        for(auto& cont : contents) {
+            if(!cont.unchanged && !cont.is_dublicate_of_full && !cont.is_dublicate_of_diff && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+                if(is_identical(cont, diff_flag)) {
                     return;
                 }
-                else {
-                    identical -= file_size; // rollback
-                }
-
-
-
             }
         }
+
+        if(diff_flag) {
+            for (auto& cont : contents_full) {
+                if (!cont.second.unchanged && !cont.second.is_dublicate_of_full && !cont.second.is_dublicate_of_diff && cont.second.size == file_meta.size && cont.second.first == file_meta.first && cont.second.last == file_meta.last) {
+                    if (is_identical(cont.second, false)) {
+                        return;
+                    }
+                }
+            }
+        }
+
 
         io.seek(ifile, 0, SEEK_SET);
     }
@@ -2068,6 +2084,8 @@ void compress_recursive(const STRING &base_dir, vector<STRING> items, bool top_l
     }
     items.clear();
     items.insert(items.end(), items2.begin(), items2.end());
+
+
 
     // Todo, rewrite to iterate through the list just once, and place items in each their new list. Then process
     // these new lists.
