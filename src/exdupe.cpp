@@ -245,6 +245,8 @@ public:
     char hash[16];
     uint32_t first;
     uint32_t last;
+
+    bool in_diff;
 };
 
 vector<contents_t> contents;
@@ -252,6 +254,8 @@ vector<contents_t> contents;
 // Only used during diff backup/restore
 unordered_map<STRING, contents_t> contents_full; // {abs_path, contents}
 unordered_map<uint32_t, STRING> contents_full_ids; // {file_id, abs_path}
+
+unordered_map<uint32_t, contents_t> all_file_hashes;
 
 typedef struct {
     uint64_t payload;
@@ -332,6 +336,7 @@ void read_content_item(FILE* file, contents_t* c) {
     c->unchanged = ((type >> 2) & 1) == 1;
     c->is_dublicate_of_full = ((type >> 3) & 1) == 1;
     c->is_dublicate_of_diff = ((type >> 4) & 1) == 1;
+    c->in_diff = ((type >> 5) & 1) == 1;
 
     c->file_id = io.read_compact<uint32_t>(file);
     if (c->unchanged) {
@@ -362,7 +367,7 @@ void read_content_item(FILE* file, contents_t* c) {
 
 void write_contents_item(FILE *file, contents_t *c) {
     uint64_t written = io.write_count;
-    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate_of_full ? 1 : 0) << 3) | ((c->is_dublicate_of_diff ? 1 : 0) << 4);
+    uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate_of_full ? 1 : 0) << 3) | ((c->is_dublicate_of_diff ? 1 : 0) << 4) | ((c->in_diff ? 1 : 0) << 5);
     io.write_ui<uint8_t>(type, file);
     io.write_compact<uint32_t>(c->file_id, file);
 
@@ -1715,6 +1720,9 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     contents_t file_meta;
     uint64_t file_read = 0;
 
+
+#if 1
+
     if (diff_flag && input_file != UNITXT("-stdin")) {
         if(!no_timestamp_flag) {
             file_time = get_date(input_file);
@@ -1740,6 +1748,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
             }
         }
     }
+#endif
 
 
     ifile = try_open(input_file.c_str(), 'r', false);
@@ -1778,7 +1787,9 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     file_meta.symlink = false;
     file_meta.unchanged = false;
     file_meta.file_id = file_id_counter++;
+    file_meta.in_diff = diff_flag;
 
+#if 1
 
     if(file_size > 4096 && input_file != UNITXT("-stdin")) {
         uint32_t lo;
@@ -1845,29 +1856,27 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
             }
         };
 
-        for(auto& cont : contents) {
-            if(!cont.unchanged && !cont.is_dublicate_of_full && !cont.is_dublicate_of_diff && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
-                if(is_identical(cont, diff_flag)) {
-                    return;
-                }
-            }
-        }
 
-        if(diff_flag) {
-            for (auto& cont : contents_full) {
-                if (!cont.second.unchanged && !cont.second.is_dublicate_of_full && !cont.second.is_dublicate_of_diff && cont.second.size == file_meta.size && cont.second.first == file_meta.first && cont.second.last == file_meta.last) {
-                    if (is_identical(cont.second, false)) {
+        auto it = all_file_hashes.find(file_meta.first);
+        if(it != all_file_hashes.end()) {
+
+            auto& cont = it->second;
+            assert(!cont.dublicate && !cont.unchanged && !cont.directory);
+           
+                if(!cont.dublicate && !cont.unchanged && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+                    if(is_identical(cont, cont.in_diff)) {
                         return;
                     }
                 }
-            }
-        }
+            
 
+
+        }
 
         io.seek(ifile, 0, SEEK_SET);
     }
 
-
+#endif
 
     checksum_init(&file_meta.ct);
 
@@ -1965,6 +1974,11 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     }
 
     file_meta.checksum = file_meta.ct.result32();
+
+    if(!file_meta.dublicate && !file_meta.unchanged && !file_meta.directory) {
+        all_file_hashes[file_meta.first] = file_meta;
+    }
+
     contents.push_back(file_meta);
 }
 
@@ -2479,6 +2493,9 @@ int main(int argc2, char *argv2[])
             for(auto c : con) {
                 c.abs_path = CASESENSE(c.abs_path);
                 contents_full[CASESENSE(abs_path(c.abs_path))] = c;
+                if (!c.dublicate && !c.unchanged && !c.directory) {
+                    all_file_hashes[c.first] = c;
+                }
             }
 
             io.close(ifile);
