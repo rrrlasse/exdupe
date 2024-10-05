@@ -130,6 +130,8 @@ const size_t RESTORE_CHUNKSIZE = 1 * M;
 // this was benchmarked in 2010, test if still valid today
 const size_t RESTORE_BUFFER = 256 * M;
 
+const size_t IDENTICAL_FILE_SIZE = 4 * 4096;
+
 #define compile_assert(x) extern int __dummy[(int)x];
 
 compile_assert(sizeof(size_t) == 8);
@@ -1791,7 +1793,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
 
 #if 1
 
-    if(file_size > 4096 && input_file != UNITXT("-stdin")) {
+    if(file_size > IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
         uint32_t lo;
         uint32_t hi;
         char kb[1024];
@@ -1811,65 +1813,56 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         file_meta.first = lo;
         file_meta.last = hi;
 
-        auto is_identical = [&](contents_t& cont, bool in_diff) -> bool{
-            io.seek(ifile, 0, SEEK_SET);
-            checksum_init(&c);
-
-            for (;;) {
-                auto r = io.read(in, 1024 * 1024, ifile);
-                identical += r;
-                update_statusbar_backup(input_file);
-                if (r == 0) {
-                    break;
-                }
-                checksum((unsigned char*)in, r, &c);
-            }
-
-            auto crc = c.result32();
-            if (crc == cont.checksum) {
-                file_meta.payload = cont.payload;
-                file_meta.checksum = cont.checksum;
-
-                file_meta.is_dublicate_of_full = !in_diff;
-                file_meta.is_dublicate_of_diff = in_diff;
-
-                file_meta.dublicate = cont.file_id;
-
-                if (!diff_flag) {
-                    // todo clear abs_path?
-                    io.try_write("U", 1, ofile);
-                    write_contents_item(ofile, &file_meta);
-                }
-
-                identical_files++;
-                contents.push_back(file_meta);
-                if (flush) {
-                    flushit();
-                }
-                io.close(ifile);
-                //wcerr << L"\nFOUND DUBLICATE\n";
-                return true;
-            }
-            else {
-                identical -= file_size; // rollback
-                return false;
-            }
-        };
 
 
         auto it = all_file_hashes.find(file_meta.first);
         if(it != all_file_hashes.end()) {
-
             auto& cont = it->second;
             assert(!cont.dublicate && !cont.unchanged && !cont.directory);
            
-                if(!cont.dublicate && !cont.unchanged && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
-                    if(is_identical(cont, cont.in_diff)) {
-                        return;
-                    }
-                }
-            
+            if(!cont.dublicate && !cont.unchanged && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
+                io.seek(ifile, 0, SEEK_SET);
+                checksum_init(&c);
 
+                for (;;) {
+                    auto r = io.read(in, 1024 * 1024, ifile);
+                    identical += r;
+                    update_statusbar_backup(input_file);
+                    if (r == 0) {
+                        break;
+                    }
+                    checksum((unsigned char*)in, r, &c);
+                }
+
+                auto crc = c.result32();
+                if (crc == cont.checksum) {
+                    file_meta.payload = cont.payload;
+                    file_meta.checksum = cont.checksum;
+
+                    file_meta.is_dublicate_of_full = !cont.in_diff;
+                    file_meta.is_dublicate_of_diff = cont.in_diff;
+
+                    file_meta.dublicate = cont.file_id;
+
+                    if (!diff_flag) {
+                        // todo clear abs_path?
+                        io.try_write("U", 1, ofile);
+                        write_contents_item(ofile, &file_meta);
+                    }
+
+                    identical_files++;
+                    contents.push_back(file_meta);
+                    if (flush) {
+                        flushit();
+                    }
+                    io.close(ifile);
+                    return;
+                }
+                else {
+                    identical -= file_size; // rollback
+                }
+
+            }
 
         }
 
@@ -1900,7 +1893,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         empty_q(entropy);
 
 
-        if (file_size > 1024 * 1024) {
+        if (file_size > IDENTICAL_FILE_SIZE) {
             auto l = lcase(filename);
             entropy = (l.ends_with(L".jpg")) || (l.ends_with(L".zip")) || (l.ends_with(L".mp4"))
                 || (l.ends_with(L".mpeg")) || (l.ends_with(L".wmv")) || (l.ends_with(L".mp3"))
