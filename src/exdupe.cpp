@@ -1691,6 +1691,11 @@ size_t payload_queue_size = 0;
 
 vector<contents_t> file_queue;
 
+
+
+
+
+
 // NOTE! Remember to call with flush = true after, or with the last file! If you flush, then passing a file is optional
 // and you can leave the string parameters empty.
 void compress_file(const STRING &input_file, const STRING &filename, const bool flush) {
@@ -1812,21 +1817,20 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     file_meta.in_diff = diff_flag;
 
 #if 1
-
     if(file_size >= IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
-        char kb[1024];
         checksum_t c;
 
-        io.read(kb, 1024, ifile);
+        io.seek(ifile, 0, SEEK_SET);
+        io.read(in, 1024, ifile);
         checksum_init(&c);
-        checksum((unsigned char*)kb, 1024, &c);
-        file_meta.first = c.result32();
+        checksum(in, 1024, &c);
+        file_meta.first = c.result64();
 
         io.seek(ifile, -1024, SEEK_END);
-        io.read(kb, 1024, ifile);
+        io.read(in, 1024, ifile);
         checksum_init(&c);
-        checksum((unsigned char*)kb, 1024, &c);
-        file_meta.last = c.result32();
+        checksum(in, 1024, &c);
+        file_meta.last = c.result64();
 
         auto it = all_file_hashes.find(file_meta.first);
         if(it != all_file_hashes.end()) {
@@ -1837,13 +1841,9 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 io.seek(ifile, 0, SEEK_SET);
                 checksum_init(&c);
 
-                for (;;) {
-                    auto r = io.read(in, 1024 * 1024, ifile);
+                for (size_t r; r = io.read(in, DISK_READ_CHUNK, ifile); r > 0) {
                     identical += r;
                     update_statusbar_backup(input_file);
-                    if (r == 0) {
-                        break;
-                    }
                     checksum((unsigned char*)in, r, &c);
                 }
 
@@ -1851,10 +1851,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 if (crc == cont.hash) {
                     file_meta.payload = cont.payload;
                     file_meta.checksum = cont.checksum;
-
                     file_meta.is_dublicate_of_full = !cont.in_diff;
                     file_meta.is_dublicate_of_diff = cont.in_diff;
-
                     file_meta.dublicate = cont.file_id;
 
                     if (!diff_flag) {
@@ -1874,14 +1872,9 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 else {
                     identical -= file_size; // rollback
                 }
-
             }
-
         }
-
-        io.seek(ifile, 0, SEEK_SET);
     }
-
 #endif
 
     checksum_init(&file_meta.ct);
@@ -1895,11 +1888,12 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
         write_contents_item(ofile, &tmp);
     }
 
-
     file_queue.push_back(file_meta);
 
     bool entropy = false;
 
+    io.seek(ifile, 0, SEEK_SET);
+    
     if (file_size > DISK_READ_CHUNK - payload_queue_size) {
         empty_q(false, entropy);
 
