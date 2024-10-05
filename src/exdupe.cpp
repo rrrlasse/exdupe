@@ -1694,39 +1694,38 @@ vector<contents_t> file_queue;
 // NOTE! Remember to call with flush = true after, or with the last file! If you flush, then passing a file is optional
 // and you can leave the string parameters empty.
 void compress_file(const STRING &input_file, const STRING &filename, const bool flush) {
-    auto empty_q = [&](bool entropy = false) {
-        if (payload_queue_size > 0) {
-            uint64_t pay;
-            size_t cc = dup_compress(payload_queue.data(), (char *)out, payload_queue_size, &pay, entropy);
-            payload_compressed += pay;
+
+    auto empty_q = [&](bool flush, bool entropy) {
+        uint64_t pay;
+        size_t cc;
+        auto write_result = [&]() {
             if (cc > 0) {
                 io.try_write("A", 1, ofile);
                 add_references(out, cc, io.write_count);
                 io.try_write(out, cc, ofile);
                 io.try_write("B", 1, ofile);
             }
+            payload_compressed += pay;
+        };
+
+        if (payload_queue_size > 0) {
+            cc = dup_compress(payload_queue.data(), (char *)out, payload_queue_size, &pay, entropy);
+            write_result();
             payload_queue_size = 0;
         }
-    };
 
-    auto flushit = [&]() {
-        empty_q();
-        while (payload_compressed < payload_read) {
-            size_t pay;
-            size_t cc = flush_pend((char *)out, &pay);
-            payload_compressed += pay;
-            if (cc > 0) {
-                io.try_write("A", 1, ofile);
-                add_references(out, cc, io.write_count);
-                io.try_write(out, cc, ofile);
-                io.try_write("B", 1, ofile);
+        if(flush) {
+            while (payload_compressed < payload_read) {
+                cc = flush_pend((char*)out, &pay);
+                write_result();
             }
         }
-        return;
     };
 
+
+
     if (flush && input_file == UNITXT("")) {
-        flushit();
+        empty_q(true, false);
         return;
     }
 
@@ -1765,7 +1764,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 // io.try_write("F", 1, ofile); 
                 // write_contents_item(ofile, &c);
                 if (flush) {
-                    flushit();
+                    empty_q(true, false);
                 }
                 return;
             }
@@ -1867,7 +1866,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                     identical_files++;
                     contents.push_back(file_meta);
                     if (flush) {
-                        flushit();
+                        empty_q(true, false);
                     }
                     io.close(ifile);
                     return;
@@ -1902,7 +1901,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     bool entropy = false;
 
     if (file_size > DISK_READ_CHUNK - payload_queue_size) {
-        empty_q(entropy);
+        empty_q(false, entropy);
 
 
         if (file_size >= IDENTICAL_FILE_SIZE) {
@@ -1949,7 +1948,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 entropy = false;
             }
             
-            empty_q(entropy);
+            empty_q(false, entropy);
         }
         file_queue.clear();
     } else {
@@ -1977,7 +1976,7 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     fclose(ifile);
 
     if (flush) {
-        flushit();
+        empty_q(true, false);
     }
 
     if (input_file == UNITXT("-stdin")) {
