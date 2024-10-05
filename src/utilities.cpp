@@ -388,9 +388,9 @@ void itoa(int n, char s[]) {
 
 
 
-char* checksum_t::result() {
+std::string checksum_t::result() {
     hash = XXH3_128bits_digest(&state);
-    return (char*)&hash;
+    return string((char*)&hash, 16);
 }
 
 
@@ -400,6 +400,11 @@ uint32_t checksum_t::hi() {
 };
 
 uint32_t checksum_t::result32() {
+    hash = XXH3_128bits_digest(&state);
+    return hash.low64;
+};
+
+uint64_t checksum_t::result64() {
     hash = XXH3_128bits_digest(&state);
     return hash.low64;
 };

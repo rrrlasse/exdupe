@@ -125,9 +125,10 @@ template <class T, class U> const uint64_t minimum(const T a, const U b) {
 struct checksum_t {
     XXH3_state_t state;
     XXH128_hash_t hash;
-    char* result();
+    std::string result();
     uint32_t hi();
     uint32_t result32();
+    uint64_t result64();
 };
 
 void checksum(unsigned char *data, size_t len, checksum_t *t);

@@ -174,6 +174,7 @@ uint64_t tot_res = 0;
 uint64_t unchanged = 0; // payload of unchanged files between a full and diff backup
 uint64_t identical = 0;
 uint64_t identical_files = 0;
+uint64_t high_entropy_files;
 
 uint64_t unchanged_files = 0;
 
@@ -240,15 +241,36 @@ public:
     STRING extra;
     STRING abs_path;
     uint64_t file_id; // diff files refer to this for unchanged files
+    bool in_diff;
 
     bool is_dublicate_of_full = false;
     bool is_dublicate_of_diff = false;
     uint64_t dublicate = 0;
-    char hash[16];
-    uint32_t first;
-    uint32_t last;
 
-    bool in_diff;
+    std::string hash;
+    uint64_t first = 0;
+    uint64_t last = 0;
+
+    void read_hash(FILE* f) {
+        auto len = io.read_compact<uint64_t>(f);
+        hash = io.try_read(len, f); // todo, make std::string reading function
+
+        if(len > 0) {
+            first = io.read_ui<uint64_t>(f);
+            last = io.read_ui<uint64_t>(f);
+        }
+    }
+
+    void write_hash(FILE* f) {
+        io.write_compact<uint64_t>(hash.size(), f);
+        io.try_write(hash.data(), hash.size(), f);
+
+        if(hash.size() > 0) {
+            io.write_ui<uint64_t>(first, f);
+            io.write_ui<uint64_t>(last, f);
+        }
+    }
+
 };
 
 vector<contents_t> contents;
@@ -355,8 +377,8 @@ void read_content_item(FILE* file, contents_t* c) {
     c->attributes = io.read_ui<uint32_t>(file);
 
     c->dublicate = io.read_compact<uint64_t>(file);
-    c->first = io.read_ui<uint32_t>(file);
-    c->last = io.read_ui<uint32_t>(file);
+
+    c->read_hash(file);
 
     if (!c->directory) {
         STRING i = c->name;
@@ -385,9 +407,8 @@ void write_contents_item(FILE *file, contents_t *c) {
         io.write_ui<uint32_t>(c->attributes, file);
 
         io.write_compact<uint64_t>(c->dublicate, file);
-        io.write_ui<uint32_t>(c->first, file);
-        io.write_ui<uint32_t>(c->last, file);
 
+        c->write_hash(file);
     }
     contents_size += io.write_count - written;
 }
@@ -1793,27 +1814,20 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
 
 #if 1
 
-    if(file_size > IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
-        uint32_t lo;
-        uint32_t hi;
+    if(file_size >= IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
         char kb[1024];
         checksum_t c;
 
         io.read(kb, 1024, ifile);
         checksum_init(&c);
         checksum((unsigned char*)kb, 1024, &c);
-        lo = c.result32();
+        file_meta.first = c.result32();
 
         io.seek(ifile, -1024, SEEK_END);
         io.read(kb, 1024, ifile);
         checksum_init(&c);
         checksum((unsigned char*)kb, 1024, &c);
-        hi = c.result32();
-
-        file_meta.first = lo;
-        file_meta.last = hi;
-
-
+        file_meta.last = c.result32();
 
         auto it = all_file_hashes.find(file_meta.first);
         if(it != all_file_hashes.end()) {
@@ -1834,8 +1848,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                     checksum((unsigned char*)in, r, &c);
                 }
 
-                auto crc = c.result32();
-                if (crc == cont.checksum) {
+                auto crc = c.result();
+                if (crc == cont.hash) {
                     file_meta.payload = cont.payload;
                     file_meta.checksum = cont.checksum;
 
@@ -1887,20 +1901,20 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
 
     bool entropy = false;
 
-
-
     if (file_size > DISK_READ_CHUNK - payload_queue_size) {
         empty_q(entropy);
 
 
-        if (file_size > IDENTICAL_FILE_SIZE) {
+        if (file_size >= IDENTICAL_FILE_SIZE) {
             auto l = lcase(filename);
             entropy = (l.ends_with(L".jpg")) || (l.ends_with(L".zip")) || (l.ends_with(L".mp4"))
                 || (l.ends_with(L".mpeg")) || (l.ends_with(L".wmv")) || (l.ends_with(L".mp3"))
                 || (l.ends_with(L".webp")) || (l.ends_with(L".rar"));
-        }
 
-       // entropy = false;
+            if(entropy) {
+                high_entropy_files++;
+            }
+        }
 
         while (file_read < file_size) {
             update_statusbar_backup(input_file);
@@ -1927,6 +1941,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
                 io.try_write("C", 1, ofile);
                 file_meta.checksum = file_meta.ct.result32();
                 io.write_ui<uint32_t>(file_meta.ct.result32(), ofile);
+
+
             }
 
             if (file_read >= file_size) {
@@ -1953,6 +1969,8 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
             io.try_write("C", 1, ofile);
             file_meta.checksum = file_meta.ct.result32();
             io.write_ui<uint32_t>(file_meta.ct.result32(), ofile);
+
+
         }
     }
 
@@ -1967,6 +1985,9 @@ void compress_file(const STRING &input_file, const STRING &filename, const bool 
     }
 
     file_meta.checksum = file_meta.ct.result32();
+    if(file_meta.size >= IDENTICAL_FILE_SIZE) {
+        file_meta.hash = file_meta.ct.result();
+    }
 
     if(!file_meta.dublicate && !file_meta.unchanged && !file_meta.directory) {
         all_file_hashes[file_meta.first] = file_meta;
@@ -2554,7 +2575,7 @@ int main(int argc2, char *argv2[])
             s << "Overheads:                   " << format_size(contents_size) << "B meta, " << format_size(references_size) << "B refs, " << format_size(hashtable_size) << "B hashtable, " << format_size(io.write_count - total) << "B misc\n";    
             s << "Unhashed due to congestion:  " << format_size(congested_large) << "B large, " << format_size(congested_small) << "B small\n";
             s << "Unhashed anomalies:          " << format_size(anomalies_large) << "B large, " << format_size(anomalies_small) << "B small\n";
-            s << "High entropy files:          " << format_size(high_entropy) << "B";
+            s << "High entropy files:          " << format_size(high_entropy) << "B in " << w2s(del(high_entropy_files)) << " files";
 
 
             /*
