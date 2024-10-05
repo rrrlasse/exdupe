@@ -93,6 +93,7 @@ const bool WIN = false;
 #include "ui.hpp"
 #include "unicode.h"
 #include "utilities.hpp"
+#include "file_types.h"
 
 #include "libexdupe/xxHash/xxh3.h"
 #include "libexdupe/xxHash/xxhash.h"
@@ -213,6 +214,8 @@ std::vector<unsigned char> restore_buffer_in;
 std::vector<unsigned char> restore_buffer_out;
 
 Bytebuffer bytebuffer(RESTORE_BUFFER);
+
+FileTypes file_types;
 
 STRING tempdiff = UNITXT("EXDUPE.TMP");
 
@@ -1882,10 +1885,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
         empty_q(false, entropy);
 
         if (file_size >= IDENTICAL_FILE_SIZE) {
-            auto l = lcase(filename);
-            entropy = (l.ends_with(L".jpg")) || (l.ends_with(L".zip")) || (l.ends_with(L".mp4"))
-                || (l.ends_with(L".mpeg")) || (l.ends_with(L".wmv")) || (l.ends_with(L".mp3"))
-                || (l.ends_with(L".webp")) || (l.ends_with(L".rar"));
+            entropy = file_types.high_entropy(0, filename);
 
             if(entropy) {
                 high_entropy_files++;
@@ -2088,8 +2088,8 @@ void compress_recursive(const STRING &base_dir, vector<STRING> items, bool top_l
         STRING sub = base_dir + items.at(j);
         if ((!ISDIR(attributes.at(j)) && !ISSOCK(attributes.at(j))) && !(ISLINK(attributes.at(j)) && !follow_symlinks) && include(sub, top_level)) {
             save_directory(base_dir, left(items.at(j)) + (left(items.at(j)) == UNITXT("") ? UNITXT("") : DELIM_STR), true);
-            STRING u = items.at(j);
-            STRING s = right(u) == UNITXT("") ? u : right(u);
+            STRING UNITXT = items.at(j);
+            STRING s = right(UNITXT) == UNITXT("") ? UNITXT : right(UNITXT);
             compress_file(sub, s);
         }
     }
@@ -2365,7 +2365,6 @@ void create_shadows(void) {
 #endif
 }
 
-
 #ifdef WINDOWS
 int wmain(int argc2, CHR *argv2[])
 #else
@@ -2397,6 +2396,8 @@ int main(int argc2, char *argv2[])
 
     create_shadows();
     parse_files(); // sets "directory"
+
+    file_types.add_type({ UNITXT("jpg"), UNITXT("zip"), UNITXT("mp4"), UNITXT("mpeg"), UNITXT("wmv"), UNITXT("mp3"), UNITXT("webp"), UNITXT("rar½") });
 
 #ifdef WINDOWS
     _setmode(_fileno(stdin), _O_BINARY);
