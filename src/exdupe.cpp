@@ -1718,13 +1718,13 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     contents_t file_meta;
     uint64_t file_read = 0;
 
-#if 1
+#if 1 // Detect files that are unchanged between full and diff backup, by comparing created and last-modified timestamps
     if (diff_flag && input_file != UNITXT("-stdin")) {
         if(!no_timestamp_flag) {
             file_time = get_date(input_file);
             contents_t f;
             auto it = contents_full.find(CASESENSE(abs_path(input_file)));
-            // The "it->second.name == filename" is for Windows where we decide to do a full backup of a file if its only change was a case-rename. Note that
+            // The "it->second.name == filename" is for Windows where we decide to do a full backup of a file even if its only change was a case-rename. Note that
             // drive-letter casing can apparently fluctuate randomly on Windows, so don't compare full paths
             if(it != contents_full.end() && it->second.file_c_time == file_time.first && it->second.file_modified == file_time.second && it->second.name == filename) {
                 update_statusbar_backup(input_file);
@@ -1734,7 +1734,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
                 unchanged_files++;
                 contents.push_back(c);
                 files++;
-                // Could only be used if we supported restore of diff from stding
+                // Could only be used if we supported restore of diff from stdin
                 // io.try_write("F", 1, ofile); 
                 // write_contents_item(ofile, &c);
                 return;
@@ -1758,7 +1758,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
 
     if (input_file != UNITXT("-stdin")) {
         io.seek(ifile, 0, SEEK_END);
-        file_time = get_date(input_file);
+        file_time = get_date(input_file); // todo, call only once
         file_size = io.tell(ifile);
         attributes = get_attributes(input_file, follow_symlinks);
         io.seek(ifile, 0, SEEK_SET);
@@ -1780,7 +1780,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     file_meta.file_id = file_id_counter++;
     file_meta.in_diff = diff_flag;
 
-#if 1
+#if 1 // Detect files with identical payload, both within current bacup set, and between full and diff sets
     if(file_size >= IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
         auto original = identical;
 
