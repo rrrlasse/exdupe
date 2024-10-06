@@ -93,11 +93,13 @@ const bool WIN = false;
 #include "ui.hpp"
 #include "unicode.h"
 #include "utilities.hpp"
-#include "file_types.h"
+#include "contents_t.h"
 
 #include "libexdupe/xxHash/xxh3.h"
 #include "libexdupe/xxHash/xxhash.h"
 
+import FileTypes;
+import IdenticalFiles;
 
 #ifdef _WIN32
 #pragma warning(disable : 4459) // todo
@@ -174,7 +176,7 @@ uint64_t tot_res = 0;
 
 uint64_t unchanged = 0; // payload of unchanged files between a full and diff backup
 uint64_t identical = 0;
-uint64_t identical_files = 0;
+uint64_t identical_files_count = 0;
 uint64_t high_entropy_files;
 
 uint64_t unchanged_files = 0;
@@ -216,6 +218,7 @@ std::vector<unsigned char> restore_buffer_out;
 Bytebuffer bytebuffer(RESTORE_BUFFER);
 
 FileTypes file_types;
+IdenticalFiles identical_files;
 
 STRING tempdiff = UNITXT("EXDUPE.TMP");
 
@@ -227,54 +230,7 @@ typedef struct {
 
 vector<file_offset_t> infiles;
 
-class contents_t {
-public:
-    bool unchanged = false;
-    STRING name;
-    STRING link;
-    uint64_t size;
-    uint64_t payload;
-    uint32_t checksum;
-    time_t file_modified;
-    time_t file_c_time; // created on Windows, status change on nix
-    int attributes;
-    bool directory;
-    bool symlink;
-    checksum_t ct;
-    STRING extra;
-    STRING abs_path;
-    uint64_t file_id; // diff files refer to this for unchanged files
-    bool in_diff;
 
-    bool is_dublicate_of_full = false;
-    bool is_dublicate_of_diff = false;
-    uint64_t dublicate = 0;
-
-    std::string hash;
-    uint64_t first = 0;
-    uint64_t last = 0;
-
-    void read_hash(FILE* f) {
-        auto len = io.read_compact<uint64_t>(f);
-        hash = io.try_read(len, f); // todo, make std::string reading function
-
-        if(len > 0) {
-            first = io.read_ui<uint64_t>(f);
-            last = io.read_ui<uint64_t>(f);
-        }
-    }
-
-    void write_hash(FILE* f) {
-        io.write_compact<uint64_t>(hash.size(), f);
-        io.try_write(hash.data(), hash.size(), f);
-
-        if(hash.size() > 0) {
-            io.write_ui<uint64_t>(first, f);
-            io.write_ui<uint64_t>(last, f);
-        }
-    }
-
-};
 
 vector<contents_t> contents;
 
@@ -282,7 +238,7 @@ vector<contents_t> contents;
 unordered_map<STRING, contents_t> contents_full; // {abs_path, contents}
 unordered_map<uint32_t, STRING> contents_full_ids; // {file_id, abs_path}
 
-unordered_map<uint32_t, contents_t> all_file_hashes;
+//unordered_map<uint32_t, contents_t> all_file_hashes;
 
 typedef struct {
     uint64_t payload;
@@ -294,6 +250,28 @@ typedef struct {
 
 vector<reference_t> references;
 vector<reference_t> read_ahead;
+
+// todo, move
+void read_hash(FILE* f, contents_t& c) {
+    auto len = io.read_compact<uint64_t>(f);
+    c.hash = io.try_read(len, f); // todo, make std::string reading function
+
+    if (len > 0) {
+        c.first = io.read_ui<uint64_t>(f);
+        c.last = io.read_ui<uint64_t>(f);
+    }
+}
+
+void write_hash(FILE* f, const contents_t& c) {
+    io.write_compact<uint64_t>(c.hash.size(), f);
+    io.try_write(c.hash.data(), c.hash.size(), f);
+
+    if (c.hash.size() > 0) {
+        io.write_ui<uint64_t>(c.first, f);
+        io.write_ui<uint64_t>(c.last, f);
+    }
+}
+
 
 template<class T> void ensure_size(std::vector<T> &v, size_t min_size) {
     if (v.size() < min_size) {
@@ -327,8 +305,8 @@ void abort(bool b, const CHR *fmt, ...) {
     }
 }
 
-void update_statusbar_backup(STRING file) {
-    statusbar.update(BACKUP, dup_counter_payload() + unchanged + identical, io.write_count, file);
+void update_statusbar_backup(STRING file, bool message = false) {
+    statusbar.update(BACKUP, dup_counter_payload() + unchanged + identical, io.write_count, file, false, message);
 }
 
 void update_statusbar_restore(STRING file) {
@@ -381,7 +359,7 @@ void read_content_item(FILE* file, contents_t* c) {
 
     c->dublicate = io.read_compact<uint64_t>(file);
 
-    c->read_hash(file);
+    read_hash(file, *c);
 
     if (!c->directory) {
         STRING i = c->name;
@@ -411,7 +389,7 @@ void write_contents_item(FILE *file, contents_t *c) {
 
         io.write_compact<uint64_t>(c->dublicate, file);
 
-        c->write_hash(file);
+        write_hash(file, *c);
     }
     contents_size += io.write_count - written;
 }
@@ -1740,9 +1718,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     contents_t file_meta;
     uint64_t file_read = 0;
 
-
 #if 1
-
     if (diff_flag && input_file != UNITXT("-stdin")) {
         if(!no_timestamp_flag) {
             file_time = get_date(input_file);
@@ -1767,7 +1743,6 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     }
 #endif
 
-
     ifile = try_open(input_file.c_str(), 'r', false);
 
     if (!ifile) {
@@ -1778,7 +1753,6 @@ void compress_file(const STRING &input_file, const STRING &filename) {
             abort(true, UNITXT("Aborted, error opening source file: %s"), input_file.c_str());
         }
     }
-
 
     update_statusbar_backup(input_file);
 
@@ -1808,58 +1782,30 @@ void compress_file(const STRING &input_file, const STRING &filename) {
 
 #if 1
     if(file_size >= IDENTICAL_FILE_SIZE && input_file != UNITXT("-stdin")) {
-        checksum_t c;
+        auto original = identical;
 
-        io.seek(ifile, 0, SEEK_SET);
-        io.read(in, 1024, ifile);
-        checksum_init(&c);
-        checksum(in, 1024, &c);
-        file_meta.first = c.result64();
+        contents_t cont = identical_files.identical_to(ifile, file_meta, io, [](uint64_t n, STRING file) { identical += n; update_statusbar_backup(file); }, input_file);
 
-        io.seek(ifile, -1024, SEEK_END);
-        io.read(in, 1024, ifile);
-        checksum_init(&c);
-        checksum(in, 1024, &c);
-        file_meta.last = c.result64();
+        if(!cont.hash.empty()) {
+            file_meta.payload = cont.payload;
+            file_meta.checksum = cont.checksum;
+            file_meta.is_dublicate_of_full = !cont.in_diff;
+            file_meta.is_dublicate_of_diff = cont.in_diff;
+            file_meta.dublicate = cont.file_id;
 
-        auto it = all_file_hashes.find(file_meta.first);
-        if(it != all_file_hashes.end()) {
-            auto& cont = it->second;
-            assert(!cont.dublicate && !cont.unchanged && !cont.directory);
-           
-            if(!cont.dublicate && !cont.unchanged && cont.size == file_meta.size && cont.first == file_meta.first && cont.last == file_meta.last) {
-                io.seek(ifile, 0, SEEK_SET);
-                checksum_init(&c);
-
-                for (size_t r; r = io.read(in, DISK_READ_CHUNK, ifile); r > 0) {
-                    identical += r;
-                    update_statusbar_backup(input_file);
-                    checksum((unsigned char*)in, r, &c);
-                }
-
-                auto crc = c.result();
-                if (crc == cont.hash) {
-                    file_meta.payload = cont.payload;
-                    file_meta.checksum = cont.checksum;
-                    file_meta.is_dublicate_of_full = !cont.in_diff;
-                    file_meta.is_dublicate_of_diff = cont.in_diff;
-                    file_meta.dublicate = cont.file_id;
-
-                    if (!diff_flag) {
-                        // todo clear abs_path?
-                        io.try_write("U", 1, ofile);
-                        write_contents_item(ofile, &file_meta);
-                    }
-
-                    identical_files++;
-                    contents.push_back(file_meta);
-                    io.close(ifile);
-                    return;
-                }
-                else {
-                    identical -= file_size; // rollback
-                }
+            if (!diff_flag) {
+                // todo clear abs_path?
+                io.try_write("U", 1, ofile);
+                write_contents_item(ofile, &file_meta);
             }
+
+            identical_files_count++;
+            contents.push_back(file_meta);
+            io.close(ifile);
+            return;            
+        }
+        else {
+            identical = original;
         }
     }
 #endif
@@ -1950,13 +1896,8 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     }
 
     file_meta.checksum = file_meta.ct.result32();
-    if(file_meta.size >= IDENTICAL_FILE_SIZE) {
-        file_meta.hash = file_meta.ct.result();
-    }
-
-    if(!file_meta.dublicate && !file_meta.unchanged && !file_meta.directory) {
-        all_file_hashes[file_meta.first] = file_meta;
-    }
+    file_meta.hash = file_meta.ct.result();
+    identical_files.add(file_meta);
 
     contents.push_back(file_meta);
 }
@@ -2473,9 +2414,7 @@ int main(int argc2, char *argv2[])
             for(auto c : con) {
                 c.abs_path = CASESENSE(c.abs_path);
                 contents_full[CASESENSE(abs_path(c.abs_path))] = c;
-                if (!c.dublicate && !c.unchanged && !c.directory) {
-                    all_file_hashes[c.first] = c;
-                }
+                identical_files.add(c);
             }
 
             io.close(ifile);
@@ -2536,7 +2475,7 @@ int main(int argc2, char *argv2[])
             if(diff_flag) {
                 s << "Stored as unchanged files:   " << format_size(unchanged) << "B in " << w2s(del(unchanged_files)) << " files\n";
             }
-            s << "Stored as duplicated files:  " << format_size(identical) << " in " << w2s(del(identical_files)) << " files\n";
+            s << "Stored as duplicated files:  " << format_size(identical) << " in " << w2s(del(identical_files_count)) << " files\n";
             s << "Stored as duplicated blocks: " << format_size(largehits + smallhits) << "B (" << format_size(largehits) << "B large, " << format_size(smallhits) << "B small)\n";
             s << "Stored as literals:          " << format_size(stored_as_literals) << "B (" << format_size(literals_compressed_size) << "B compressed)\n";
             uint64_t total = literals_compressed_size + contents_size + references_size + hashtable_size;
