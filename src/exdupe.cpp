@@ -100,6 +100,7 @@ const bool WIN = false;
 
 import FileTypes;
 import IdenticalFiles;
+import UntouchedFiles;
 
 #ifdef _WIN32
 #pragma warning(disable : 4459) // todo
@@ -219,6 +220,7 @@ Bytebuffer bytebuffer(RESTORE_BUFFER);
 
 FileTypes file_types;
 IdenticalFiles identical_files;
+UntouchedFiles untouched_files2;
 
 STRING tempdiff = UNITXT("EXDUPE.TMP");
 
@@ -233,12 +235,6 @@ vector<file_offset_t> infiles;
 
 
 vector<contents_t> contents;
-
-// Only used during diff backup/restore
-unordered_map<STRING, contents_t> contents_full; // {abs_path, contents}
-unordered_map<uint32_t, STRING> contents_full_ids; // {file_id, abs_path}
-
-//unordered_map<uint32_t, contents_t> all_file_hashes;
 
 typedef struct {
     uint64_t payload;
@@ -748,17 +744,9 @@ vector<contents_t> read_contents(FILE* f) {
 void init_content_maps(FILE* ffull) {
     auto con = read_contents(ffull);
     for(auto c : con) {
+        // fixme, verify this works for .is_dublicate
         if(!c.directory && !c.symlink) {
-
-            if(contents_full.find(CASESENSE(c.abs_path)) != contents_full.end()) {
-                int g = 234;
-            }
-
-
-            abort((contents_full.find(CASESENSE(c.abs_path)) != contents_full.end()), UNITXT("Internal error at main::contents_full.find(), or diff file doesn't belong to full file"));
-            contents_full[CASESENSE(c.abs_path)] = c;
-            abort((contents_full_ids.find(c.file_id) != contents_full_ids.end()), UNITXT("Internal error at main::contents_full_ids.find(), or diff file doesn't belong to full file"));
-            contents_full_ids[c.file_id] = CASESENSE(c.abs_path);
+            untouched_files2.add_during_restore(c);
         }
     }
 }
@@ -786,20 +774,6 @@ FILE *try_open(STRING file2, char mode, bool abortfail) {
     return f;
 }
 
-void resolve_unchanged(contents_t &c) {
-
-            if(c.unchanged) {
-                auto id_iter = contents_full_ids.find(c.file_id);
-                abort(id_iter == contents_full_ids.end(), UNITXT("Internal error at decompress_individuals::contents_full.find(), or diff file doesn't belong to full file"));
-                auto p = id_iter->second;
-                auto path_iter = contents_full.find(p);
-                abort(path_iter == contents_full.end(), UNITXT("Internal error at decompress_individuals::contents_full.find(), or diff file doesn't belong to full file"));
-                // todo, maybe it's better to remove this and let the payload writer access contents_full directly                
-                c = path_iter->second;
-                c.unchanged = true;
-            }
-        
-}
 
 uint64_t dump_contents() {
     FILE* ffile = try_open(full, 'r', true);
@@ -837,8 +811,7 @@ uint64_t dump_contents() {
                 }
             }
         } else {
-            resolve_unchanged(c);
-
+            untouched_files2.initialize_if_untouched(c);
             payload += c.size;
             files++;
             print_file(c.name, c.size, c.file_modified, c.attributes);
@@ -1446,7 +1419,7 @@ void decompress_individuals(FILE *ffull, FILE *fdiff) {
     content = read_contents(archive_file);
     if(diff_flag) {
         for (auto &c : content) {
-            resolve_unchanged(c);
+            untouched_files2.initialize_if_untouched(c);
         }
     }
 
@@ -1719,26 +1692,27 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     uint64_t file_read = 0;
 
 #if 1 // Detect files that are unchanged between full and diff backup, by comparing created and last-modified timestamps
+
+
     if (diff_flag && input_file != UNITXT("-stdin")) {
         if(!no_timestamp_flag) {
             file_time = get_date(input_file);
-            contents_t f;
-            auto it = contents_full.find(CASESENSE(abs_path(input_file)));
-            // The "it->second.name == filename" is for Windows where we decide to do a full backup of a file even if its only change was a case-rename. Note that
-            // drive-letter casing can apparently fluctuate randomly on Windows, so don't compare full paths
-            if(it != contents_full.end() && it->second.file_c_time == file_time.first && it->second.file_modified == file_time.second && it->second.name == filename) {
+            auto c = untouched_files2.exists(input_file, filename, file_time);
+            if(c) {
                 update_statusbar_backup(input_file);
-                contents_t c = it->second;
-                c.unchanged = true;
-                unchanged += c.size;
+                //contents_t c = it->second;
+                c->unchanged = true;
+                unchanged += c->size;
                 unchanged_files++;
-                contents.push_back(c);
+                contents.push_back(*c);
                 files++;
                 // Could only be used if we supported restore of diff from stdin
                 // io.try_write("F", 1, ofile); 
                 // write_contents_item(ofile, &c);
                 return;
             }
+
+
         }
     }
 #endif
@@ -2413,7 +2387,7 @@ int main(int argc2, char *argv2[])
             auto con = read_contents(ifile);
             for(auto c : con) {
                 c.abs_path = CASESENSE(c.abs_path);
-                contents_full[CASESENSE(abs_path(c.abs_path))] = c;
+                untouched_files2.add_during_backup(c);
                 identical_files.add(c);
             }
 
@@ -2473,9 +2447,9 @@ int main(int argc2, char *argv2[])
             sratio = sratio > 999 ? 999 : sratio == 0 ? 1 : sratio;
             statusbar.print_no_lf(1, UNITXT("Compressed %s B in %s files into %s B (%s%%) at %sB/s\n"), del(dup_counter_payload() + unchanged + identical).c_str(), del(files).c_str(), del(io.write_count).c_str(), s2w(std::to_string(sratio)).c_str(), s2w(format_size((dup_counter_payload() + unchanged + identical) / t * 1000)).c_str());
             if(diff_flag) {
-                s << "Stored as unchanged files:   " << format_size(unchanged) << "B in " << w2s(del(unchanged_files)) << " files\n";
+                s << "Stored as untouched files:   " << format_size(unchanged) << "B in " << w2s(del(unchanged_files)) << " files\n";
             }
-            s << "Stored as duplicated files:  " << format_size(identical) << " in " << w2s(del(identical_files_count)) << " files\n";
+            s << "Stored as duplicated files:  " << format_size(identical) << "B in " << w2s(del(identical_files_count)) << " files\n";
             s << "Stored as duplicated blocks: " << format_size(largehits + smallhits) << "B (" << format_size(largehits) << "B large, " << format_size(smallhits) << "B small)\n";
             s << "Stored as literals:          " << format_size(stored_as_literals) << "B (" << format_size(literals_compressed_size) << "B compressed)\n";
             uint64_t total = literals_compressed_size + contents_size + references_size + hashtable_size;
