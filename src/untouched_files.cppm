@@ -7,6 +7,7 @@ module;
 #include <string>
 #include <vector>
 #include <assert.h>
+#include <optional>
 
 export module UntouchedFiles;
 

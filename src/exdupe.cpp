@@ -1692,33 +1692,22 @@ void compress_file(const STRING &input_file, const STRING &filename) {
     uint64_t file_read = 0;
 
 #if 1 // Detect files that are unchanged between full and diff backup, by comparing created and last-modified timestamps
-
-
-    if (diff_flag && input_file != UNITXT("-stdin")) {
-        if(!no_timestamp_flag) {
-            file_time = get_date(input_file);
-            auto c = untouched_files2.exists(input_file, filename, file_time);
-            if(c) {
-                update_statusbar_backup(input_file);
-                //contents_t c = it->second;
-                c->unchanged = true;
-                unchanged += c->size;
-                unchanged_files++;
-                contents.push_back(*c);
-                files++;
-                // Could only be used if we supported restore of diff from stdin
-                // io.try_write("F", 1, ofile); 
-                // write_contents_item(ofile, &c);
-                return;
-            }
-
-
+    if (!no_timestamp_flag && diff_flag && input_file != UNITXT("-stdin")) {
+        file_time = get_date(input_file);
+        auto c = untouched_files2.exists(input_file, filename, file_time);
+        if(c) {
+            update_statusbar_backup(input_file);
+            c->unchanged = true;
+            unchanged += c->size;
+            unchanged_files++;
+            contents.push_back(*c);
+            files++;
+            return;
         }
     }
 #endif
 
     ifile = try_open(input_file.c_str(), 'r', false);
-
     if (!ifile) {
         if (continue_flag) {
             statusbar.print(2, UNITXT("Skipped, error opening source file: %s"), input_file.c_str());
@@ -1728,6 +1717,7 @@ void compress_file(const STRING &input_file, const STRING &filename) {
         }
     }
 
+    files++;
     update_statusbar_backup(input_file);
 
     if (input_file != UNITXT("-stdin")) {
@@ -1785,8 +1775,6 @@ void compress_file(const STRING &input_file, const STRING &filename) {
 #endif
 
     checksum_init(&file_meta.ct);
-
-    files++;
 
     if(!diff_flag) {
         io.try_write("F", 1, ofile);
