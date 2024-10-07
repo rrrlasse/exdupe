@@ -10,7 +10,14 @@ export module FileTypes;
 export class FileTypes
 {
 public:
-	void add_type(const std::vector<STRING>& extensions) {
+	FileTypes() {
+		add({
+			UNITXT("jpg"), UNITXT("mp4"), UNITXT("mpeg"), UNITXT("wmv"), UNITXT("jpeg"),
+			UNITXT("png"), UNITXT("avi"), UNITXT("mov"), UNITXT("flv"), UNITXT("aac"),
+			UNITXT("ogg"), UNITXT("mp3"), UNITXT("webp"), UNITXT("mkv") });
+	}
+
+	void add(const std::vector<STRING>& extensions) {
 		for (auto e : extensions) {
 #ifdef _WIN32
 			e = lcase(e);
@@ -33,10 +40,6 @@ public:
 		}
 		return false;
 	}
-
-private:
-	// ext, offset, data
-
 
 	struct t {
 		STRING extension;

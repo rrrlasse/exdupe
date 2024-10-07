@@ -196,6 +196,8 @@ vector<STRING> excludelist;
 STRING lua = UNITXT("");
 vector<STRING> shadows;
 
+vector<STRING> entropy_ext;
+
 FILE *ofile = 0, *ifile = 0;
 
 Cio io = Cio();
@@ -905,6 +907,11 @@ void parse_flags(void) {
         if (flags.length() > 2 && flags.substr(0, 2) == UNITXT("-u")) {
             lua = flags.substr(2);
             abort(lua == UNITXT(""), UNITXT("Missing command in -u flag"));
+        }
+        else if (flags.length() > 2 && flags.substr(0, 2) == UNITXT("-e")) {
+                STRING e = flags.substr(2);
+                abort(e == UNITXT(""), UNITXT("Missing extensions in -e flag"));
+                entropy_ext.push_back(e);
         } else if (flags.length() > 2 && flags.substr(0, 2) == UNITXT("-s")) {
 #ifdef WINDOWS
             STRING mount = flags.substr(2);
@@ -1168,6 +1175,8 @@ Flags:
    -z  Use slower cryptographic hash BLAKE3. Default is xxHash128
   -vn  Verbosity n (0 = quiet, 1 = status bar, 2 = skipped files, 3 = all)
    -k  Show deduplication statistics at the end
+ -e"x" Don't compress or deduplicate files with the file extension x. See
+       more with -e? flag.
 
 Example of backup, differential backups and restore:
   exdupe my_dir backup.full
@@ -1208,6 +1217,29 @@ Most common flags:
     }
 
     statusbar.print(0, show_long ? tostring(long_help).c_str() : tostring(short_help).c_str());
+}
+
+void print_e_help() {
+    STRING ext;
+    for(size_t i = 0; i < file_types.types.size(); i++) {
+        auto e = file_types.types[i].extension;
+        e = e.substr(1, e.size() - 1);
+        ext += e;
+        if(i + 1 < file_types.types.size()) {
+            ext += UNITXT(", ");
+        }
+    }
+
+    std::string e_help = R"del(File extensions that are excluded by default are:
+
+)del" + w2s(ext) + "." + R"del(
+
+Compressed archives like zip and gz are not excluded by default because some
+may benefit from deduplication.
+
+You can use multiple -e flags such as -e"rar" -e"flac".)del";
+
+    statusbar.print(0, tostring(e_help).c_str());
 }
 
 void print_lua_help() {
@@ -2284,6 +2316,10 @@ int main(int argc2, char *argv2[])
         print_lua_help();
         return 0;
     }
+    if (argc2 == 2 && argv.at(1) == UNITXT("-e?")) {
+        print_e_help();
+        return 0;
+    }
 
     if (argc2 == 2 && argv.at(1) == UNITXT("-?")) {
         print_usage(true);
@@ -2300,11 +2336,7 @@ int main(int argc2, char *argv2[])
     create_shadows();
     parse_files(); // sets "directory"
 
-    file_types.add_type({ 
-        UNITXT("jpg"), UNITXT("mp4"), UNITXT("mpeg"), UNITXT("wmv"), UNITXT("jpeg"), 
-        UNITXT("png"), UNITXT("avi"), UNITXT("mov"), UNITXT("flv"), UNITXT("aac"),
-        UNITXT("ogg"), UNITXT("flac"), UNITXT("aes"), UNITXT("enc"), UNITXT("pgp"), 
-        UNITXT("pem"), UNITXT("mp3"), UNITXT("webp"), UNITXT("mkv") });
+    file_types.add(entropy_ext);
 
 #ifdef WINDOWS
     _setmode(_fileno(stdin), _O_BINARY);
