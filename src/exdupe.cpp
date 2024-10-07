@@ -2301,12 +2301,10 @@ int main(int argc2, char *argv2[])
     parse_files(); // sets "directory"
 
     file_types.add_type({ 
-        UNITXT("jpg"), UNITXT("zip"), UNITXT("mp4"), UNITXT("mpeg"), UNITXT("wmv"),
-        UNITXT("gz"), UNITXT("bz2"), UNITXT("xz"), UNITXT("jpeg"), UNITXT("png"),
-        UNITXT("avi"), UNITXT("mov"), UNITXT("flv"), UNITXT("aac"), UNITXT("ogg"),
-        UNITXT("flac"), UNITXT("aes"), UNITXT("enc"), UNITXT("pgp"), UNITXT("pem"),
-        UNITXT("mp3"), UNITXT("webp"), UNITXT("rar"), UNITXT("7z"), UNITXT("mkv"),
-        UNITXT("pdf") });
+        UNITXT("jpg"), UNITXT("mp4"), UNITXT("mpeg"), UNITXT("wmv"), UNITXT("jpeg"), 
+        UNITXT("png"), UNITXT("avi"), UNITXT("mov"), UNITXT("flv"), UNITXT("aac"),
+        UNITXT("ogg"), UNITXT("flac"), UNITXT("aes"), UNITXT("enc"), UNITXT("pgp"), 
+        UNITXT("pem"), UNITXT("mp3"), UNITXT("webp"), UNITXT("mkv") });
 
 #ifdef WINDOWS
     _setmode(_fileno(stdin), _O_BINARY);
