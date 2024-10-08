@@ -213,7 +213,7 @@ STRING flags;
 STRING output_file;
 bool output_file_mine = false;
 void *hashtable;
-uint32_t file_id_counter = 0;
+uint64_t file_id_counter = 0;
 
 std::vector<unsigned char> restore_buffer_in;
 std::vector<unsigned char> restore_buffer_out;
@@ -341,7 +341,7 @@ void read_content_item(FILE* file, contents_t* c) {
     c->is_dublicate_of_diff = ((type >> 4) & 1) == 1;
     c->in_diff = ((type >> 5) & 1) == 1;
 
-    c->file_id = io.read_compact<uint32_t>(file);
+    c->file_id = io.read_compact<uint64_t>(file);
     if (c->unchanged) {
         return;
     }
@@ -372,7 +372,7 @@ void write_contents_item(FILE *file, contents_t *c) {
     uint64_t written = io.write_count;
     uint8_t type = ((c->directory ? 1 : 0) << 0) | ((c->symlink ? 1 : 0) << 1) | ((c->unchanged ? 1 : 0) << 2) | ((c->is_dublicate_of_full ? 1 : 0) << 3) | ((c->is_dublicate_of_diff ? 1 : 0) << 4) | ((c->in_diff ? 1 : 0) << 5);
     io.write_ui<uint8_t>(type, file);
-    io.write_compact<uint32_t>(c->file_id, file);
+    io.write_compact<uint64_t>(c->file_id, file);
 
     if(!c->unchanged) {
         io.writestr(c->abs_path, file);
@@ -2215,7 +2215,7 @@ void decompress_sequential(const STRING &extract_dir, bool add_files) {
 
         auto ofile = create_file(dst);
         auto ifile = try_open(src, 'r', true);
-        for(size_t r; r = io.read(buf.data(), DISK_READ_CHUNK, ifile); r > 0) {
+        for(size_t r; r = io.read(buf.data(), DISK_READ_CHUNK, ifile);) {
             io.write(buf.data(), r, ofile);
             tot_res += r;
             update_statusbar_restore(dst);
@@ -2483,11 +2483,13 @@ int main(int argc2, char *argv2[])
             s << "High entropy files:          " << format_size(high_entropy) << "B in " << w2s(del(high_entropy_files)) << " files";
 
 
-            /*
-            s << "\nhits1 = " << hits2/(hits1+1)  << "";
+
+            s << "\nhits1 = " << hits1  << "";
             s << "\nhits2 = " << hits2  << "\n";
             s << "hits3 = " << hits3 << "\n";
-            */
+            s << "hits4 = " << hits4 << "\n";
+
+            s << hits2 / hits1 << "  " << hits4 / hits3 << "\n";
 
 
             STRING str = s2w(s.str());

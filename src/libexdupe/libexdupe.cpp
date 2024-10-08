@@ -174,6 +174,7 @@ std::atomic<uint64_t> high_entropy;
 std::atomic<uint64_t> hits1;
 std::atomic<uint64_t> hits2;
 std::atomic<uint64_t> hits3;
+std::atomic<uint64_t> hits4;
 
 static bool dd_equal(const void *src1, const void *src2, size_t len) {
     char *s1 = (char *)src1;
@@ -529,18 +530,8 @@ static uint32_t quick(unsigned char init1, unsigned char init2, unsigned char in
 static uint32_t window(const unsigned char *src, size_t len, const unsigned char **pos) {
     size_t i = 0;
     size_t slide = minimum(len / 2, 65536); // slide must be able to fit in hash_t.O. Todo, static assert
-    size_t percent = (len - slide) / 100;
-    int8_t b = static_cast<int8_t>(len > 8 * 1024 ? 1 : (8 * 1024) / len);
-
-    b = 42;
-
-    // len  1k  2k  4k   8k  128k  256k
-    //   b   8   4   2    1     1     1
-    size_t e1 = len / 8;
-    size_t e2 = len / 8 * 2;
-
+    int8_t b = 42;
     uint64_t match = static_cast<size_t>(-1);
-  //  b = -128 + b;
 #if 0
 	for (i = 0; i + 32 < slide; i += 32) {
 		__m256i src1 = _mm256_loadu_si256((__m256i*)(&src[i]));
@@ -560,9 +551,7 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
 			break;
 		}
 	}
-
 #else
-
     for (i = 0; i + 16 < slide; i += 16) {
         __m128i src1 = _mm_loadu_si128((__m128i *)(&src[i]));
         __m128i src2 = _mm_loadu_si128((__m128i *)(&src[i + 1]));
@@ -586,9 +575,7 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
             break;
         }
     }
-
 #endif
-
 
     if (match == static_cast<uint64_t>(-1)) {
         for (; i < slide; i += 1) {
@@ -617,9 +604,6 @@ static uint32_t window(const unsigned char *src, size_t len, const unsigned char
         return 0;
     }
     else {
-        size_t p20 = 20 * percent;
-        size_t p80 = 80 * percent;
-
         return 1 + quick(src[match], src[match + 16], src[match + len - slide - 32], src[match + len - slide - 4], (unsigned char *)src + match, len - slide - 8);
     }
 }
@@ -925,9 +909,9 @@ static void *compress_thread(void *arg) {
 
         if(!me->entropy) {
             hash_chunk(me->source, me->payload, me->size_source, policy);
-            auto t = GetTickCount64();
+//            auto t = GetTickCount();
             me->size_destination = process_chunk(me->source, me->payload, me->size_source, me->destination, me->id);
-            hits1 += GetTickCount64() - t;
+//            hits1 += GetTickCount() - t;
         }
         else {
             me->size_destination = write_literals(me->source, me->size_source, me->destination, me->id, true);

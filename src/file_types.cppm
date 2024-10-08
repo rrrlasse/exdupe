@@ -30,7 +30,7 @@ public:
 #ifdef _WIN32
 		STRING f = lcase(filename);
 #else
-		STRING& f = filename;
+		const STRING& f = filename;
 #endif
 
 		for (auto& t : types) {

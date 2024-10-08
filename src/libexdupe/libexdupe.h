@@ -66,3 +66,4 @@ extern std::atomic<uint64_t> high_entropy;
 extern std::atomic<uint64_t> hits1;
 extern std::atomic<uint64_t> hits2;
 extern std::atomic<uint64_t> hits3;
+extern std::atomic<uint64_t> hits4;
