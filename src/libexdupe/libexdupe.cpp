@@ -598,9 +598,9 @@ static uint32_t window(const char* src, size_t len, const char** pos) {
 
     if (match == none) {
         for (; i < slide; i += 1) {
-            uint16_t src1 = src[i];
-            uint16_t src2 = src[i + block - 32 - 1];
-            uint16_t sum = src1 + src2;
+            int16_t src1 = *(int16_t*)&src[i];
+            int16_t src2 = *(int16_t*)&src[i + block - 32 - 1];
+            int16_t sum = src1 + src2;
             sum = sum * sum;
             if (sum > b) {
                 match = i;
