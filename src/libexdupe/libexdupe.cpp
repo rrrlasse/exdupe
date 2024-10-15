@@ -632,7 +632,7 @@ const static char *dub(const char *src, uint64_t pay, size_t len, size_t block, 
     const char *orig_src = src;
     const char *last_src = src + len - 1;
     uint32_t w = window(src, block, &w_pos);
-    size_t collision_skip = 32;
+    const char* collision = 0;
 
     while (src <= last_src) {
         hash_t* e;
@@ -665,17 +665,16 @@ const static char *dub(const char *src, uint64_t pay, size_t len, size_t block, 
                 }
 
                 if (e_cpy.offset + block < pay + (src - orig_src) && dd_equal(s, e_cpy.sha, HASH_SIZE)) {
-                    collision_skip = 8;
+                    collision = 0; // prevent skipping data now because more matches may be near by
                     *payload_ref = e_cpy.offset;
                     return src;
                 } else {
-                    char c;
-                    src += collision_skip;
-                    collision_skip = collision_skip * 2 > SMALL_BLOCK ? SMALL_BLOCK : collision_skip * 2;
-                    c = *src;
+                    src += collision > src - 1024 ? 1024 : 32;
+                    char c = *src;
                     while (src <= last_src && *src == c) {
                         src++;
                     }
+                    collision = src;
                 }
             } else {
                 src = w_pos;
